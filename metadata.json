@@ -1,0 +1,6 @@
+{
+  "name": "Gestor de Proyectos - Consultorsalud",
+  "description": "Aplicación para la gestión, seguimiento de etapas, alertas de fechas y visualización de indicadores de proyectos de consultoría en salud para Consultorsalud.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
