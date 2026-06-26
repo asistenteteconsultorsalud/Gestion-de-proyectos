@@ -191,12 +191,27 @@ export default function App() {
       setDbError(null);
       const response = await fetch('/api/data');
       if (!response.ok) {
+        // Try parsing error directly from /api/data body first
+        try {
+          const errData = await response.json();
+          const specificError = errData.details || errData.error || errData.message;
+          if (specificError) {
+            setDbError(specificError);
+            if (!silent) setLoading(false);
+            setIsSilentFetching(false);
+            return;
+          }
+        } catch (e) {}
+
+        // Fallback to db-status if parsing /api/data fails
         try {
           const statusRes = await fetch('/api/db-status');
           if (statusRes.ok) {
             const statusData = await statusRes.json();
             if (statusData.error) {
               setDbError(statusData.error);
+              if (!silent) setLoading(false);
+              setIsSilentFetching(false);
               return;
             }
           }
