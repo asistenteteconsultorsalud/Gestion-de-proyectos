@@ -7,26 +7,48 @@ import { INITIAL_PROJECTS, INITIAL_FOLLOWUPS } from './src/mockData';
 
 dotenv.config();
 
-// Sanitize DATABASE_URL to remove channel_binding parameter which node-postgres (pg) does not support
-let databaseUrl = process.env.DATABASE_URL || "";
-if (databaseUrl) {
-  try {
-    const parsedUrl = new URL(databaseUrl);
-    parsedUrl.searchParams.delete("channel_binding");
-    // Ensure sslmode is set to require or similar for Neon
-    if (!parsedUrl.searchParams.has("sslmode")) {
-      parsedUrl.searchParams.set("sslmode", "require");
-    }
-    databaseUrl = parsedUrl.toString();
-  } catch (err) {
-    console.warn("Could not parse DATABASE_URL with standard URL parser, falling back to regex cleanup", err);
-    // Fallback regex cleanup if needed
-    databaseUrl = databaseUrl.replace(/([?&])channel_binding=[^&]*/g, "");
-    databaseUrl = databaseUrl.replace(/\?&/g, "?").replace(/&&/g, "&").replace(/\?$/g, "").replace(/&$/g, "");
-  }
-}
-
+// Lazy-initialize connection pool so that DATABASE_URL is read at runtime
 const { Pool } = pg;
+
+let poolInstance: pg.Pool | null = null;
+let lastUsedDatabaseUrl: string | null = null;
+
+function getPool(): pg.Pool {
+  const currentEnvUrl = process.env.DATABASE_URL || "";
+  
+  if (poolInstance && lastUsedDatabaseUrl !== currentEnvUrl) {
+    console.log("DATABASE_URL changed or initialized. Recreating connection pool...");
+    poolInstance.end().catch(err => console.error("Error closing old pool:", err));
+    poolInstance = null;
+  }
+
+  if (!poolInstance) {
+    if (!currentEnvUrl) {
+      throw new Error("DATABASE_URL is not defined in the environment variables.");
+    }
+    
+    let sanitizedUrl = currentEnvUrl;
+    try {
+      const parsedUrl = new URL(sanitizedUrl);
+      parsedUrl.searchParams.delete("channel_binding");
+      if (!parsedUrl.searchParams.has("sslmode")) {
+        parsedUrl.searchParams.set("sslmode", "require");
+      }
+      sanitizedUrl = parsedUrl.toString();
+    } catch (err) {
+      console.warn("Could not parse DATABASE_URL with standard URL parser, falling back to regex cleanup", err);
+      sanitizedUrl = sanitizedUrl.replace(/([?&])channel_binding=[^&]*/g, "");
+      sanitizedUrl = sanitizedUrl.replace(/\?&/g, "?").replace(/&&/g, "&").replace(/\?$/g, "").replace(/&$/g, "");
+    }
+    
+    poolInstance = new Pool({
+      connectionString: sanitizedUrl,
+      ssl: { rejectUnauthorized: false },
+    });
+    lastUsedDatabaseUrl = currentEnvUrl;
+  }
+  return poolInstance;
+}
 
 // Track the latest DB connection status/error to report to the frontend
 let dbConnectionStatus: { connected: boolean; error: string | null } = {
@@ -34,9 +56,16 @@ let dbConnectionStatus: { connected: boolean; error: string | null } = {
   error: null,
 };
 
-const pool = new Pool({
-  connectionString: databaseUrl,
-  ssl: { rejectUnauthorized: false },
+// Use Proxy to delegate all Pool queries dynamically to the active poolInstance
+const pool = new Proxy({} as pg.Pool, {
+  get(target, prop, receiver) {
+    const activePool = getPool();
+    const value = Reflect.get(activePool, prop);
+    if (typeof value === "function") {
+      return value.bind(activePool);
+    }
+    return value;
+  }
 });
 
 // Helper to initialize database tables
@@ -203,8 +232,9 @@ const SEED_STAGE_DETAILS = {
 
 async function initDb() {
   try {
-    console.log("Initializing database tables if not exist using URL:", databaseUrl ? "Configured" : "Not configured");
-    if (!databaseUrl) {
+    const currentUrl = process.env.DATABASE_URL || "";
+    console.log("Initializing database tables if not exist using URL:", currentUrl ? "Configured" : "Not configured");
+    if (!currentUrl) {
       throw new Error("DATABASE_URL is not defined in the environment variables.");
     }
     
