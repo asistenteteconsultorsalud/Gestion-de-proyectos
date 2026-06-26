@@ -34,39 +34,11 @@ import { generatePDFReport } from './utils/pdfGenerator';
 
 export default function App() {
   // --- Persistent State Configuration ---
-  const [projects, setProjects] = useState<Project[]>(() => {
-    const saved = localStorage.getItem('consultorsalud_projects_db');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Error parsing local projects", e);
-      }
-    }
-    return INITIAL_PROJECTS;
-  });
-
-  const [followUps, setFollowUps] = useState<ProjectFollowUp[]>(() => {
-    const saved = localStorage.getItem('consultorsalud_followups_db');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Error parsing local followups", e);
-      }
-    }
-    return INITIAL_FOLLOWUPS;
-  });
-
-  const [readNotifIds, setReadNotifIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem('consultorsalud_read_notifs');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
-    return [];
-  });
+  const [loading, setLoading] = useState(true);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
+  const [followUps, setFollowUps] = useState<ProjectFollowUp[]>(INITIAL_FOLLOWUPS);
+  const [readNotifIds, setReadNotifIds] = useState<string[]>([]);
 
   // Flow and Notification Feedbacks states
   const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'info' | 'error' | 'warning' }[]>([]);
@@ -81,41 +53,19 @@ export default function App() {
   };
 
   // --- Dynamic customizable areas and stages ---
-  const [involvedAreas, setInvolvedAreas] = useState<string[]>(() => {
-    const saved = localStorage.getItem('consultorsalud_custom_areas');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
-    return [
-      'Consultoría Técnica y Auditoría',
-      'TI y Salud Digital',
-      'Jurídico y Regulación',
-      'Financiera y Tarifas',
-      'Comunicaciones y Eventos',
-      'Formación y Capacitación',
-      'Comercial y Mercadeo',
-    ];
-  });
+  const [involvedAreas, setInvolvedAreas] = useState<string[]>([
+    'Consultoría Técnica y Auditoría',
+    'TI y Salud Digital',
+    'Jurídico y Regulación',
+    'Financiera y Tarifas',
+    'Comunicaciones y Eventos',
+    'Formación y Capacitación',
+    'Comercial y Mercadeo',
+  ]);
 
-  const [peopleByArea, setPeopleByArea] = useState<Record<string, string[]>>(() => {
-    const saved = localStorage.getItem('consultorsalud_people_by_area');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
-    return PREDEFINED_PEOPLE_BY_AREA;
-  });
+  const [peopleByArea, setPeopleByArea] = useState<Record<string, string[]>>(PREDEFINED_PEOPLE_BY_AREA);
 
   const [teamRoster, setTeamRoster] = useState<string[]>(() => {
-    const saved = localStorage.getItem('consultorsalud_team_roster');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
     const allNames = new Set<string>();
     Object.values(PREDEFINED_PEOPLE_BY_AREA).forEach(names => {
       names.forEach(name => allNames.add(name));
@@ -123,123 +73,228 @@ export default function App() {
     return Array.from(allNames);
   });
 
-  const [areaColors, setAreaColors] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem('consultorsalud_area_colors');
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
+  const [areaColors, setAreaColors] = useState<Record<string, string>>({});
+
+  const [stageDetails, setStageDetails] = useState<Record<string, { label: string; color: string; bg: string; border: string; text: string; definition: string; keyDeliverables: string[]; typicalDuration: string }>>({
+    'POR_PRESENTAR': {
+      label: 'Por Presentar',
+      color: 'bg-blue-500',
+      bg: 'bg-blue-50',
+      border: 'border-blue-200',
+      text: 'text-blue-700',
+      definition: 'Formulación técnica, estructuración de la propuesta comercial de consultoría y estructuración de tarifas iniciales.',
+      keyDeliverables: [
+        'Estudio previo y diagnóstico de necesidades del cliente',
+        'Estructura de costos, honorarios y modelo preliminar',
+        'Propuesta técnica y económica formalizada'
+      ],
+      typicalDuration: '1 - 2 semanas'
+    },
+    'EVALUACION': {
+      label: 'En Evaluación',
+      color: 'bg-purple-500',
+      bg: 'bg-purple-50',
+      border: 'border-purple-200',
+      text: 'text-purple-700',
+      definition: 'Evaluación de convenios por comités de contratación, ajuste de copagos, reglamentos de firmas y mesas de concertación.',
+      keyDeliverables: [
+        'Mesas de concertación técnica',
+        'Estudio de viabilidad jurídica y regulatoria del sector salud',
+        'Aprobación de la junta directiva o comités delegados'
+      ],
+      typicalDuration: '2 - 3 semanas'
+    },
+    'POR_INICIAR': {
+      label: 'Listo para Inicio',
+      color: 'bg-amber-500',
+      bg: 'bg-amber-50',
+      border: 'border-amber-200',
+      text: 'text-amber-700',
+      definition: 'Suscripción de actas de inicio, legalización de pólizas de cumplimiento, entrega de anticipos y asignación de cronograma.',
+      keyDeliverables: [
+        'Firma de contrato judicial o acta administrativa de inicio',
+        'Suscripción de garantías o pólizas de cumplimiento',
+        'Asignación formal de la terna de consultores expertos'
+      ],
+      typicalDuration: '1 semana'
+    },
+    'EJECUCION': {
+      label: 'En Ejecución',
+      color: 'bg-emerald-500',
+      bg: 'bg-emerald-50',
+      border: 'border-emerald-200',
+      text: 'text-emerald-700',
+      definition: 'Fase central operativa de auditoría estructural, desarrollo de software, capacitaciones presenciales y mesas operativas.',
+      keyDeliverables: [
+        'Auditorías técnico-médicas recurrentes',
+        'Capacitaciones y talleres presenciales/virtuales con firmas de asistencia',
+        'Soportes de facturación de hitos intermedios'
+      ],
+      typicalDuration: '1 - 6 meses'
+    },
+    'PAUSA': {
+      label: 'En Pausa / Bloqueado',
+      color: 'bg-rose-500',
+      bg: 'bg-rose-50',
+      border: 'border-rose-200',
+      text: 'text-rose-700',
+      definition: 'Flujo detenido temporalmente por inconvenientes críticos externos, demoras en comités administrativos del cliente, o suspensiones pactadas.',
+      keyDeliverables: [
+        'Acta de suspensión temporal con firmas justificantes',
+        'Plan de mitigación o desbloqueo del obstáculo operacional',
+        'Revisiones extraordinarias semanales'
+      ],
+      typicalDuration: 'Frecuencia variable'
+    },
+    'COMPLETADO': {
+      label: 'Finalizado',
+      color: 'bg-slate-600',
+      bg: 'bg-slate-100',
+      border: 'border-slate-200',
+      text: 'text-slate-700',
+      definition: 'Cierre formal de consultoría. Radicación final de cuentas, transferencias de conocimiento y actas de liquidación.',
+      keyDeliverables: [
+        'Informe final ejecutivo encuadernado y digitalizado',
+        'Acta de liquidación del contrato a mutuo acuerdo',
+        'Encuesta de satisfacción de servicios del cliente'
+      ],
+      typicalDuration: 'Cierre inmediato'
+    },
+    'CANCELADO': {
+      label: 'Cancelado',
+      color: 'bg-slate-400',
+      bg: 'bg-slate-50',
+      border: 'border-slate-200',
+      text: 'text-slate-500',
+      definition: 'Terminación anticipada del proyecto por decisión mutua, cambios normativos de sanidad, o insolvencia de la entidad contratista.',
+      keyDeliverables: [
+        'Acta de rescisión anticipada detallada',
+        'Relación de pagos proporcionales consolidados hasta la fecha',
+        'Devolución de bases de datos seguras bajo confidencialidad'
+      ],
+      typicalDuration: 'Terminado'
     }
   });
 
-  const [stageDetails, setStageDetails] = useState<Record<string, { label: string; color: string; bg: string; border: string; text: string; definition: string; keyDeliverables: string[]; typicalDuration: string }>>(() => {
-    const saved = localStorage.getItem('consultorsalud_custom_stages');
-    if (saved) {
+  // Fetch initial data from DB on mount
+  useEffect(() => {
+    async function loadData() {
       try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
-    return {
-      'POR_PRESENTAR': {
-        label: 'Por Presentar',
-        color: 'bg-blue-500',
-        bg: 'bg-blue-50',
-        border: 'border-blue-200',
-        text: 'text-blue-700',
-        definition: 'Formulación técnica, estructuración de la propuesta comercial de consultoría y estructuración de tarifas iniciales.',
-        keyDeliverables: [
-          'Estudio previo y diagnóstico de necesidades del cliente',
-          'Estructura de costos, honorarios y modelo preliminar',
-          'Propuesta técnica y económica formalizada'
-        ],
-        typicalDuration: '1 - 2 semanas'
-      },
-      'EVALUACION': {
-        label: 'En Evaluación',
-        color: 'bg-purple-500',
-        bg: 'bg-purple-50',
-        border: 'border-purple-200',
-        text: 'text-purple-700',
-        definition: 'Evaluación de convenios por comités de contratación, ajuste de copagos, reglamentos de firmas y mesas de concertación.',
-        keyDeliverables: [
-          'Mesas de concertación técnica',
-          'Estudio de viabilidad jurídica y regulatoria del sector salud',
-          'Aprobación de la junta directiva o comités delegados'
-        ],
-        typicalDuration: '2 - 3 semanas'
-      },
-      'POR_INICIAR': {
-        label: 'Listo para Inicio',
-        color: 'bg-amber-500',
-        bg: 'bg-amber-50',
-        border: 'border-amber-200',
-        text: 'text-amber-700',
-        definition: 'Suscripción de actas de inicio, legalización de pólizas de cumplimiento, entrega de anticipos y asignación de cronograma.',
-        keyDeliverables: [
-          'Firma de contrato judicial o acta administrativa de inicio',
-          'Suscripción de garantías o pólizas de cumplimiento',
-          'Asignación formal de la terna de consultores expertos'
-        ],
-        typicalDuration: '1 semana'
-      },
-      'EJECUCION': {
-        label: 'En Ejecución',
-        color: 'bg-emerald-500',
-        bg: 'bg-emerald-50',
-        border: 'border-emerald-200',
-        text: 'text-emerald-700',
-        definition: 'Fase central operativa de auditoría estructural, desarrollo de software, capacitaciones presenciales y mesas operativas.',
-        keyDeliverables: [
-          'Auditorías técnico-médicas recurrentes',
-          'Capacitaciones y talleres presenciales/virtuales con firmas de asistencia',
-          'Soportes de facturación de hitos intermedios'
-        ],
-        typicalDuration: '1 - 6 meses'
-      },
-      'PAUSA': {
-        label: 'En Pausa / Bloqueado',
-        color: 'bg-rose-500',
-        bg: 'bg-rose-50',
-        border: 'border-rose-200',
-        text: 'text-rose-700',
-        definition: 'Flujo detenido temporalmente por inconvenientes críticos externos, demoras en comités administrativos del cliente, o suspensiones pactadas.',
-        keyDeliverables: [
-          'Acta de suspensión temporal con firmas justificantes',
-          'Plan de mitigación o desbloqueo del obstáculo operacional',
-          'Revisiones extraordinarias semanales'
-        ],
-        typicalDuration: 'Frecuencia variable'
-      },
-      'COMPLETADO': {
-        label: 'Finalizado',
-        color: 'bg-slate-600',
-        bg: 'bg-slate-100',
-        border: 'border-slate-200',
-        text: 'text-slate-700',
-        definition: 'Cierre formal de consultoría. Radicación final de cuentas, transferencias de conocimiento y actas de liquidación.',
-        keyDeliverables: [
-          'Informe final ejecutivo encuadernado y digitalizado',
-          'Acta de liquidación del contrato a mutuo acuerdo',
-          'Encuesta de satisfacción de servicios del cliente'
-        ],
-        typicalDuration: 'Cierre inmediato'
-      },
-      'CANCELADO': {
-        label: 'Cancelado',
-        color: 'bg-slate-400',
-        bg: 'bg-slate-50',
-        border: 'border-slate-200',
-        text: 'text-slate-500',
-        definition: 'Terminación anticipada del proyecto por decisión mutua, cambios normativos de sanidad, o insolvencia de la entidad contratista.',
-        keyDeliverables: [
-          'Acta de rescisión anticipada detallada',
-          'Relación de pagos proporcionales consolidados hasta la fecha',
-          'Devolución de bases de datos seguras bajo confidencialidad'
-        ],
-        typicalDuration: 'Terminado'
+        setDbError(null);
+        const response = await fetch('/api/data');
+        if (!response.ok) {
+          try {
+            const statusRes = await fetch('/api/db-status');
+            if (statusRes.ok) {
+              const statusData = await statusRes.json();
+              if (statusData.error) {
+                setDbError(statusData.error);
+                return;
+              }
+            }
+          } catch (e) {}
+          throw new Error('No se pudo establecer conexión con el servidor de bases de datos.');
+        }
+        const data = await response.json();
+        
+        if (data.projects) setProjects(data.projects);
+        if (data.followUps) setFollowUps(data.followUps);
+        
+        const settings = data.settings || {};
+        if (settings.involvedAreas) setInvolvedAreas(settings.involvedAreas);
+        if (settings.peopleByArea) setPeopleByArea(settings.peopleByArea);
+        if (settings.teamRoster) setTeamRoster(settings.teamRoster);
+        if (settings.areaColors) setAreaColors(settings.areaColors);
+        if (settings.stageDetails) setStageDetails(settings.stageDetails);
+        if (settings.readNotifIds) setReadNotifIds(settings.readNotifIds);
+        setLoading(false);
+      } catch (err: any) {
+        console.error("Error loading database data:", err);
+        try {
+          const statusRes = await fetch('/api/db-status');
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.error) {
+              setDbError(statusData.error);
+              return;
+            }
+          }
+        } catch (e) {}
+        setDbError(err.message || String(err));
       }
-    };
-  });
+    }
+    loadData();
+  }, []);
+
+  const handleBypassDb = () => {
+    setDbError(null);
+    setLoading(false);
+    showToast("Trabajando en modo local (Desconectado de la base de datos)", "warning");
+  };
+
+  const handleRetryDb = () => {
+    setLoading(true);
+    setDbError(null);
+    window.location.reload();
+  };
+
+  // Helper to save setting to DB
+  const saveSettingToDb = (key: string, value: any) => {
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value })
+    }).catch(err => console.error(`Error saving setting ${key} to DB:`, err));
+  };
+
+  // Synchronize state changes to Neon Database when loaded
+  useEffect(() => {
+    if (loading) return;
+    fetch('/api/projects/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(projects)
+    }).catch(err => console.error("Error syncing projects to DB:", err));
+  }, [projects, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    fetch('/api/followups/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(followUps)
+    }).catch(err => console.error("Error syncing followups to DB:", err));
+  }, [followUps, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    saveSettingToDb('involvedAreas', involvedAreas);
+  }, [involvedAreas, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    saveSettingToDb('peopleByArea', peopleByArea);
+  }, [peopleByArea, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    saveSettingToDb('teamRoster', teamRoster);
+  }, [teamRoster, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    saveSettingToDb('areaColors', areaColors);
+  }, [areaColors, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    saveSettingToDb('stageDetails', stageDetails);
+  }, [stageDetails, loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    saveSettingToDb('readNotifIds', readNotifIds);
+  }, [readNotifIds, loading]);
 
   // Action handlers for Areas
   const handleAddArea = (areaName: string, colorKey?: string) => {
@@ -258,7 +313,6 @@ export default function App() {
     if (colorKey) {
       setAreaColors(prev => {
         const copy = { ...prev, [trimmed]: colorKey };
-        localStorage.setItem('consultorsalud_area_colors', JSON.stringify(copy));
         return copy;
       });
     }
@@ -305,7 +359,6 @@ export default function App() {
         copy[trimmedNew] = copy[oldName];
         delete copy[oldName];
       }
-      localStorage.setItem('consultorsalud_area_colors', JSON.stringify(copy));
       return copy;
     });
 
@@ -336,7 +389,6 @@ export default function App() {
     setAreaColors(prev => {
       const copy = { ...prev };
       delete copy[areaName];
-      localStorage.setItem('consultorsalud_area_colors', JSON.stringify(copy));
       return copy;
     });
 
@@ -346,7 +398,6 @@ export default function App() {
   const handleUpdateAreaColor = (areaName: string, colorKey: string) => {
     setAreaColors(prev => {
       const copy = { ...prev, [areaName]: colorKey };
-      localStorage.setItem('consultorsalud_area_colors', JSON.stringify(copy));
       return copy;
     });
     showToast(`Color del área "${areaName}" personalizado con éxito.`, 'success');
@@ -441,7 +492,7 @@ export default function App() {
     if (blockedProjects.length > 0) {
       setCriticalAlertModalOpen(true);
     }
-  }, []);
+  }, [projects]);
 
   const handleExportPDF = () => {
     try {
@@ -459,35 +510,7 @@ export default function App() {
     }
   };
 
-  // Synchronization hook to localStorage
-  useEffect(() => {
-    localStorage.setItem('consultorsalud_projects_db', JSON.stringify(projects));
-  }, [projects]);
-
-  useEffect(() => {
-    localStorage.setItem('consultorsalud_followups_db', JSON.stringify(followUps));
-  }, [followUps]);
-
-  useEffect(() => {
-    localStorage.setItem('consultorsalud_read_notifs', JSON.stringify(readNotifIds));
-  }, [readNotifIds]);
-
-  useEffect(() => {
-    localStorage.setItem('consultorsalud_custom_areas', JSON.stringify(involvedAreas));
-  }, [involvedAreas]);
-
-  useEffect(() => {
-    localStorage.setItem('consultorsalud_custom_stages', JSON.stringify(stageDetails));
-  }, [stageDetails]);
-
-  useEffect(() => {
-    localStorage.setItem('consultorsalud_people_by_area', JSON.stringify(peopleByArea));
-  }, [peopleByArea]);
-
-  useEffect(() => {
-    localStorage.setItem('consultorsalud_team_roster', JSON.stringify(teamRoster));
-  }, [teamRoster]);
-
+  // Synchronize sidebar preference
   useEffect(() => {
     localStorage.setItem('consultorsalud_sidebar_collapsed', JSON.stringify(sidebarCollapsed));
   }, [sidebarCollapsed]);
@@ -661,6 +684,72 @@ export default function App() {
     const unreadIds = generatedNotifications.filter(n => !n.read).map(n => n.id);
     setReadNotifIds([...readNotifIds, ...unreadIds]);
   };
+
+  if (dbError) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans p-6">
+        <div className="w-full max-w-xl bg-white rounded-xl shadow-md border border-red-100 overflow-hidden">
+          <div className="bg-red-50 p-6 border-b border-red-100 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center text-red-600 shrink-0">
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">Error de conexión a la Base de Datos</h2>
+              <p className="text-xs text-slate-500 mt-0.5">La base de datos en Neon no respondió correctamente.</p>
+            </div>
+          </div>
+          <div className="p-6 space-y-4">
+            <div className="bg-slate-50 rounded-lg p-4 font-mono text-xs text-slate-700 max-h-40 overflow-y-auto border border-slate-200">
+              <p className="font-semibold text-slate-900 mb-1">Detalle del error:</p>
+              {dbError}
+            </div>
+
+            <div className="space-y-2 text-sm text-slate-600">
+              <p className="font-semibold text-slate-700">¿Qué significa esto?</p>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Es posible que la variable <code className="bg-slate-100 px-1 py-0.5 rounded text-xs">DATABASE_URL</code> no esté configurada correctamente.</li>
+                <li>Hemos sanitizado automáticamente la conexión quitando parámetros como <code className="bg-slate-100 px-1 py-0.5 rounded text-xs">channel_binding=require</code> para maximizar la compatibilidad.</li>
+                <li>La base de datos puede estar inactiva, cargando o el usuario de Neon puede no tener privilegios.</li>
+              </ul>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <button
+                onClick={handleRetryDb}
+                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all shadow-sm flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 4.89M9 11l3 3L22 4" />
+                </svg>
+                Reintentar Conexión
+              </button>
+              <button
+                onClick={handleBypassDb}
+                className="flex-1 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold transition-all flex items-center justify-center"
+              >
+                Continuar en Modo Local (Demo)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-sm font-semibold text-slate-600 animate-pulse">
+            Conectando con la Base de Datos en Neon...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const activeProjectDetailObj = selectedProjectId 
     ? projects.find(p => p.id === selectedProjectId) 
