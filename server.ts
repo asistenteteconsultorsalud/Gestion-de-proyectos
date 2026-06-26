@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import pg from "pg";
 import dotenv from "dotenv";
 import { INITIAL_PROJECTS, INITIAL_FOLLOWUPS } from './src/mockData';
@@ -456,6 +455,66 @@ const app = express();
 
 app.use(express.json({ limit: '10mb' }));
 
+app.get("/api/test-db", async (req, res) => {
+  const currentEnvUrl = (process.env.DATABASE_URL || "").trim();
+  let status = "Not tested";
+  let debugInfo: any = {
+    exists: !!currentEnvUrl,
+    length: currentEnvUrl.length,
+    node_env: process.env.NODE_ENV,
+    is_vercel: !!process.env.VERCEL,
+  };
+
+  if (currentEnvUrl) {
+    try {
+      const parsed = new URL(currentEnvUrl);
+      parsed.password = "****";
+      debugInfo.parsed_preview = parsed.toString();
+    } catch (e: any) {
+      debugInfo.parse_error = e.message;
+      debugInfo.raw_preview = currentEnvUrl.substring(0, 15) + "..." + currentEnvUrl.substring(Math.max(0, currentEnvUrl.length - 15));
+    }
+
+    let sanitizedUrl = currentEnvUrl;
+    try {
+      const parsedUrl = new URL(sanitizedUrl);
+      parsedUrl.searchParams.delete("channel_binding");
+      if (!parsedUrl.searchParams.has("sslmode")) {
+        parsedUrl.searchParams.set("sslmode", "require");
+      }
+      sanitizedUrl = parsedUrl.toString();
+      debugInfo.sanitized_preview = sanitizedUrl.replace(/\/\/([^:]+):([^@]+)@/, "//$1:****@");
+    } catch (err: any) {
+      debugInfo.sanitizing_error = err.message;
+    }
+
+    const client = new pg.Client({
+      connectionString: sanitizedUrl,
+      ssl: { rejectUnauthorized: false },
+    });
+
+    try {
+      await client.connect();
+      const dbRes = await client.query("SELECT version()");
+      status = "Success";
+      debugInfo.db_version = dbRes.rows[0]?.version;
+      await client.end();
+    } catch (connectErr: any) {
+      status = "Failed";
+      debugInfo.connect_error = connectErr.message || String(connectErr);
+      debugInfo.connect_error_stack = connectErr.stack;
+      try {
+        await client.end();
+      } catch (e) {}
+    }
+  }
+
+  res.json({
+    status,
+    debugInfo
+  });
+});
+
 // Middleware to ensure DB is initialized lazily
 let dbInitialized = false;
 let dbInitializationPromise: Promise<void> | null = null;
@@ -476,7 +535,7 @@ async function ensureDb() {
 // Ensure database is initialized before any API request is handled (except db-status)
 app.use("/api", async (req, res, next) => {
   // Allow checking connection status even if DB is failing to initialize
-  if (req.path === "/db-status" || req.url.endsWith("/db-status")) {
+  if (req.path === "/db-status" || req.url.endsWith("/db-status") || req.path === "/test-db" || req.url.endsWith("/test-db")) {
     return next();
   }
   try {

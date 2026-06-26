@@ -1,525 +1,502 @@
-import React, { useState } from 'react';
-import { Project, ProjectStage, STAGE_DETAILS, INVOLVED_AREAS, Milestone, getAreaStyle, PREDEFINED_PEOPLE_BY_AREA } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Project, ProjectStage, STAGE_DETAILS, INVOLVED_AREAS, getAreaStyle } from '../types';
 import { 
-  X, 
-  Save, 
-  HelpCircle, 
-  FolderGit, 
-  DollarSign, 
+  PlusCircle, 
+  Search, 
   User, 
-  Calendar,
-  Building,
-  FilePlus,
-  Compass,
-  ListPlus,
-  XCircle,
-  AlertCircle
+  Calendar, 
+  DollarSign, 
+  AlertCircle,
+  TrendingUp, 
+  Trash2, 
+  ChevronRight, 
+  SlidersHorizontal,
+  BookmarkPlus,
+  Building2,
 } from 'lucide-react';
 
-interface ProjectFormProps {
-  onAddProject: (newProject: Project) => void;
-  onCancel: () => void;
+interface ProjectListProps {
+  projects: Project[];
+  onSelectProject: (projectId: string) => void;
+  onDeleteProject: (projectId: string) => void;
+  onAddProjectClick: () => void;
+  initialStageFilter?: string;
+  onStageFilterChange?: (stage: string) => void;
+  initialAreaFilter?: string;
+  onAreaFilterChange?: (area: string) => void;
   involvedAreas?: string[];
   stageDetails?: Record<string, { label: string; color: string; bg: string; border: string; text: string }>;
-  peopleByArea?: Record<string, string[]>;
 }
 
-export default function ProjectForm({ 
-  onAddProject, 
-  onCancel,
+export default function ProjectList({ 
+  projects, 
+  onSelectProject, 
+  onDeleteProject, 
+  onAddProjectClick,
+  initialStageFilter = 'ALL',
+  onStageFilterChange,
+  initialAreaFilter = 'ALL',
+  onAreaFilterChange,
   involvedAreas = INVOLVED_AREAS,
-  stageDetails = STAGE_DETAILS as any,
-  peopleByArea = PREDEFINED_PEOPLE_BY_AREA
-}: ProjectFormProps) {
-  // Form variables
-  const [formData, setFormData] = useState({
-    name: '',
-    entity: '',
-    description: '',
-    leader: '',
-    startDate: '2026-06-19',
-    dueDate: '2026-07-15',
-    budget: '',
-    stage: Object.keys(stageDetails)[0] || 'POR_PRESENTAR',
-    notes: ''
+  stageDetails = STAGE_DETAILS as any
+}: ProjectListProps) {
+  // Filters & Search State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedStage, setSelectedStage] = useState<string>(initialStageFilter);
+  const [selectedArea, setSelectedArea] = useState<string>(initialAreaFilter);
+  const [selectedStatus, setSelectedStatus] = useState<string>('ALL'); // ALL, OK, BLOCKED, OVERDUE
+  const [selectedPerson, setSelectedPerson] = useState<string>('ALL');
+  const [hoveredQuickPeek, setHoveredQuickPeek] = useState<string | null>(null);
+
+  // Extract all unique people currently assigned within the projects database
+  const allAssignedPeople = useMemo(() => {
+    const list = new Set<string>();
+    projects.forEach(p => {
+      if (p.areaAssignments) {
+        Object.values(p.areaAssignments).forEach(arr => {
+          arr.forEach(person => {
+            if (person.trim()) {
+              list.add(person.trim());
+            }
+          });
+        });
+      }
+    });
+    return Array.from(list).sort();
+  }, [projects]);
+
+  // Sycnronize external pre-filters (e.g. from Dashboard stage click)
+  useEffect(() => {
+    setSelectedStage(initialStageFilter);
+  }, [initialStageFilter]);
+
+  useEffect(() => {
+    setSelectedArea(initialAreaFilter);
+  }, [initialAreaFilter]);
+
+  const handleStageChange = (newStage: string) => {
+    setSelectedStage(newStage);
+    if (onStageFilterChange) {
+      onStageFilterChange(newStage);
+    }
+  };
+
+  const handleAreaChange = (newArea: string) => {
+    setSelectedArea(newArea);
+    if (onAreaFilterChange) {
+      onAreaFilterChange(newArea);
+    }
+  };
+
+  // Reference today date
+  const today = new Date('2026-06-19');
+
+  // Filter projects based on conditions
+  const filteredProjects = projects.filter(proj => {
+    // 1. Search Query Match
+    const matchesSearch = 
+      proj.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      proj.entity.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      proj.leader.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      proj.description.toLowerCase().includes(searchQuery.toLowerCase());
+
+    // 2. Stage Match
+    const matchesStage = selectedStage === 'ALL' || proj.stage === selectedStage;
+
+    // 3. Area Match
+    const matchesArea = selectedArea === 'ALL' || proj.areas.includes(selectedArea);
+
+    // 3.5. Person Match
+    let matchesPerson = true;
+    if (selectedPerson !== 'ALL') {
+      matchesPerson = false;
+      if (proj.areaAssignments) {
+        matchesPerson = Object.values(proj.areaAssignments).some(arr => 
+          arr.some(p => p.trim().toLowerCase() === selectedPerson.toLowerCase())
+        );
+      }
+    }
+
+    // 4. Status Match
+    let matchesStatus = true;
+    if (selectedStatus === 'BLOCKED') {
+      matchesStatus = proj.hasBlocker;
+    } else if (selectedStatus === 'OVERDUE') {
+      const isCompleted = proj.stage === ProjectStage.COMPLETADO || proj.stage === ProjectStage.CANCELADO;
+      matchesStatus = !isCompleted && new Date(proj.dueDate) < today;
+    } else if (selectedStatus === 'OK') {
+      const isCompleted = proj.stage === ProjectStage.COMPLETADO || proj.stage === ProjectStage.CANCELADO;
+      const isOverdue = !isCompleted && new Date(proj.dueDate) < today;
+      matchesStatus = !proj.hasBlocker && !isOverdue;
+    }
+
+    return matchesSearch && matchesStage && matchesArea && matchesPerson && matchesStatus;
   });
 
-  // Selected areas
-  const [selectedAreas, setSelectedAreas] = useState<string[]>([]);
-  const [areaAssignments, setAreaAssignments] = useState<Record<string, string[]>>({});
-  const [personInputs, setPersonInputs] = useState<Record<string, string>>({});
-  const [errorMsg, setErrorMsg] = useState('');
-  
-  // Custom initial startup milestone
-  const [initialMilestoneTitle, setInitialMilestoneTitle] = useState('');
-  const [initialMilestoneDue, setInitialMilestoneDue] = useState('');
-  const [initialMilestoneArea, setInitialMilestoneArea] = useState('');
-  const [initialMilestonePerson, setInitialMilestonePerson] = useState('');
-
-  const handleAreaToggle = (area: string) => {
-    if (selectedAreas.includes(area)) {
-      setSelectedAreas(selectedAreas.filter(a => a !== area));
-    } else {
-      setSelectedAreas([...selectedAreas, area]);
-      if (!areaAssignments[area]) {
-        setAreaAssignments(prev => ({ ...prev, [area]: [] }));
-      }
-    }
-  };
-
-  const handleAddPerson = (area: string) => {
-    const name = (personInputs[area] || '').trim();
-    if (!name) return;
-    
-    const current = areaAssignments[area] || [];
-    if (current.includes(name)) {
-      return;
-    }
-    
-    setAreaAssignments(prev => ({
-      ...prev,
-      [area]: [...current, name]
-    }));
-    
-    setPersonInputs(prev => ({
-      ...prev,
-      [area]: ''
-    }));
-  };
-
-  const handleRemovePerson = (area: string, personToRemove: string) => {
-    setAreaAssignments(prev => ({
-      ...prev,
-      [area]: (prev[area] || []).filter(p => p !== personToRemove)
-    }));
-  };
-
-  const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-
-    // Custom non-blocking inline validations
-    if (!formData.name.trim()) {
-      setErrorMsg('Por favor ingresa un nombre comercial para el proyecto.');
-      return;
-    }
-    if (!formData.entity.trim()) {
-      setErrorMsg('Por favor ingresa el nombre de la Entidad Cliente.');
-      return;
-    }
-    if (!formData.leader.trim()) {
-      setErrorMsg('Por favor ingresa el nombre del líder técnico encargado.');
-      return;
-    }
-    if (selectedAreas.length === 0) {
-      setErrorMsg('Debe seleccionar al menos un área involucrada para el proyecto.');
-      return;
-    }
-
-    setErrorMsg('');
-    const parsedBudget = parseFloat(formData.budget) || 0;
-
-    // Build Milestones list
-    const initialMilestones: Milestone[] = [
-      {
-        id: `m-init-${Date.now()}`,
-        title: initialMilestoneTitle.trim() || 'Sustentar propuesta y firmar acta de inicio',
-        dueDate: initialMilestoneDue || formData.dueDate,
-        completed: false,
-        area: initialMilestoneArea || undefined,
-        assignedPerson: initialMilestonePerson || undefined
-      }
-    ];
-
-    const createdProject: Project = {
-      id: `proj-${Date.now()}`,
-      name: formData.name.trim(),
-      entity: formData.entity.trim(),
-      description: formData.description.trim(),
-      leader: formData.leader.trim(),
-      startDate: formData.startDate,
-      dueDate: formData.dueDate,
-      budget: parsedBudget,
-      stage: formData.stage,
-      areas: selectedAreas,
-      areaAssignments: areaAssignments,
-      progress: 0,
-      hasBlocker: false,
-      milestones: initialMilestones,
-      issues: [],
-      notes: formData.notes.trim()
-    };
-
-    onAddProject(createdProject);
+  // Calculate stats for current filtering
+  const formatCOP = (val: number) => {
+    return `$${val.toLocaleString('es-CO')} COP`;
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden animate-fade-in max-w-4xl mx-auto font-sans">
-      {/* Form Header */}
-      <div className="bg-slate-50 px-6 py-5 flex justify-between items-center border-b border-slate-200">
-        <div className="space-y-0.5">
-          <h2 className="text-base font-black text-slate-900 tracking-tight uppercase">Registrar Nuevo Proyecto</h2>
-          <p className="text-xs text-slate-500 font-medium">Asigne consultores, montos de facturación, áreas de trabajo y el cronograma de entregas.</p>
+    <div className="space-y-6 animate-fade-in">
+      {/* List Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-black text-slate-900 tracking-tight">Listado Maestro de Proyectos</h2>
+          <p className="text-xs text-slate-500 font-medium">Agrega, filtra, edita y supervisa los proyectos activos y programados.</p>
         </div>
+
         <button
-          type="button"
-          onClick={onCancel}
-          className="p-2 rounded-xl bg-white hover:bg-slate-150 text-slate-500 font-bold text-xs transition border border-slate-200 hover:border-slate-300 inline-flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+          onClick={onAddProjectClick}
+          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-all shadow-sm text-xs md:text-sm active:scale-95"
         >
-          <X className="w-4 h-4" />
-          <span>Cancelar</span>
+          <PlusCircle className="w-4.5 h-4.5" />
+          Registrar Nuevo Proyecto
         </button>
       </div>
 
-      <form onSubmit={handleSubmit} className="p-6 md:p-8 space-y-6 text-xs">
-        
-        {/* Section 1: Project Metadata */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-1.5 pb-2 border-b border-slate-100 text-slate-800 text-sm font-bold">
-            <FolderGit className="w-4 h-4 text-blue-600" />
-            <h3 className="tracking-tight font-black uppercase text-slate-700 text-xs">1. Datos Generales de la Consultoría</h3>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Nombre del Proyecto *</label>
+      {/* Filter Toolbar - Bento Panel style */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div className="flex items-center gap-2 text-slate-700 text-xs font-bold pb-2 border-b border-slate-100 font-sans">
+          <SlidersHorizontal className="w-4 h-4 text-blue-600" />
+          <span className="tracking-tight uppercase text-slate-500 text-[10px] font-black">Filtros avanzados de búsqueda</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Search Box */}
+          <div className="relative">
+            <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Buscar texto</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
               <input
                 type="text"
-                name="name"
-                required
-                value={formData.name}
-                onChange={handleFormChange}
-                placeholder="Ej. Auditoría de Cuentas Médicas Hospital de Neiva"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-all placeholder-slate-400 font-semibold"
+                placeholder="Proyecto, entidad, líder..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-all font-medium"
               />
             </div>
-
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Entidad Cliente / Prestadora *</label>
-              <div className="relative">
-                <Building className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  name="entity"
-                  required
-                  value={formData.entity}
-                  onChange={handleFormChange}
-                  placeholder="Ej. EPS Convenio, Clínicas del Café, Minsalud..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-all placeholder-slate-400 font-semibold"
-                />
-              </div>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Descripción del Alcance contractual *</label>
-              <textarea
-                name="description"
-                required
-                value={formData.description}
-                onChange={handleFormChange}
-                rows={3}
-                placeholder="Sintetice brevemente los entregables de consultoría, reglamentos normativos a revisar y metas del proyecto."
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-all resize-none placeholder-slate-400 font-medium"
-              ></textarea>
-            </div>
-          </div>
-        </div>
-
-        {/* Section 2: Financial and Allocation */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-1.5 pb-2 border-b border-slate-100 text-slate-800 text-sm font-bold">
-            <DollarSign className="w-4 h-4 text-blue-600" />
-            <h3 className="tracking-tight font-black uppercase text-slate-700 text-xs">2. Asignación Financiera y Cronograma</h3>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Monto Presupuesto (COP) *</label>
-              <input
-                type="number"
-                name="budget"
-                required
-                value={formData.budget}
-                onChange={handleFormChange}
-                placeholder="Presupuesto en pesos"
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-all placeholder-slate-400 font-mono font-black"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Líder Técnico Encargado *</label>
-              <div className="relative">
-                <User className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  name="leader"
-                  required
-                  value={formData.leader}
-                  onChange={handleFormChange}
-                  placeholder="Director de proyecto..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-all placeholder-slate-400 font-semibold"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Fecha de Inicio *</label>
-              <div className="relative">
-                <Calendar className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
-                <input
-                  type="date"
-                  name="startDate"
-                  required
-                  value={formData.startDate}
-                  onChange={handleFormChange}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-all font-semibold"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5 tracking-wider">Fecha Límite Evaluada *</label>
-              <div className="relative">
-                <Calendar className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
-                <input
-                  type="date"
-                  name="dueDate"
-                  required
-                  value={formData.dueDate}
-                  onChange={handleFormChange}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-all font-black"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Section 3: Project State & Teams */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-          {/* Column A: Areas selection */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-1.5 pb-2 border-b border-slate-100 text-slate-800 text-sm font-bold">
-              <Compass className="w-4 h-4 text-blue-600" />
-              <h3 className="tracking-tight font-black uppercase text-slate-700 text-xs">3. Áreas que Intervienen *</h3>
-            </div>
-            
-            <p className="text-[11px] text-slate-500 font-medium">Selecciona los departamentos internos que operarán activamente este proyecto:</p>
-            
-            <div className="space-y-1.5 max-h-48 overflow-y-auto border border-slate-200 rounded-xl p-3 bg-slate-50/50">
-              {involvedAreas.map(area => (
-                <label 
-                  key={area} 
-                  className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg hover:bg-slate-100/75 cursor-pointer select-none"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedAreas.includes(area)}
-                    onChange={() => handleAreaToggle(area)}
-                    className="rounded accent-blue-600 cursor-pointer"
-                  />
-                  <span className="text-slate-700 font-bold">{area}</span>
-                </label>
+          {/* Stage Filter */}
+          <div>
+            <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Filtrar por Etapa</label>
+            <select
+              value={selectedStage}
+              onChange={e => handleStageChange(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white font-medium transition-all"
+            >
+              <option value="ALL">Todas las Etapas</option>
+              {Object.keys(stageDetails).map(stageKey => (
+                <option key={stageKey} value={stageKey}>
+                  {stageDetails[stageKey].label}
+                </option>
               ))}
-            </div>
+            </select>
           </div>
 
-          {/* Column B: Primary Stage and Initial delivery */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-1.5 pb-2 border-b border-slate-100 text-slate-800 text-sm font-bold">
-              <ListPlus className="w-4 h-4 text-blue-600" />
-              <h3 className="tracking-tight font-black uppercase text-slate-700 text-xs">4. Etapa y Arranque Operativo</h3>
-            </div>
+          {/* Area Filter */}
+          <div>
+            <label className="block text-[10px] font-black text-slate-405 uppercase mb-1.5">Área de Intervención</label>
+            <select
+              value={selectedArea}
+              onChange={e => handleAreaChange(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white font-medium transition-all"
+            >
+              <option value="ALL">Todas las Áreas</option>
+              {involvedAreas.map(area => (
+                <option key={area} value={area}>
+                  {area}
+                </option>
+              ))}
+            </select>
+          </div>
 
-            <div className="space-y-3.5">
-              <div>
-                <label className="block text-[10px] font-black text-slate-450 uppercase mb-1.5 tracking-wider">Etapa Inicial del Proyecto</label>
-                <select
-                  name="stage"
-                  value={formData.stage}
-                  onChange={handleFormChange}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white font-bold transition-all cursor-pointer"
-                >
-                  {Object.keys(stageDetails).map(sk => (
-                    <option key={sk} value={sk}>
-                      {stageDetails[sk].label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          {/* Assigned Personnel Filter */}
+          <div>
+            <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Consultor Asignado</label>
+            <select
+              value={selectedPerson}
+              onChange={e => setSelectedPerson(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white font-medium transition-all"
+            >
+              <option value="ALL">Todos los Consultores</option>
+              {allAssignedPeople.map(p => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
 
-              <div>
-                <label className="block text-[10px] font-black text-slate-450 uppercase mb-1.5 tracking-wider">Primer Hito / Entregable Clave</label>
-                <input
-                  type="text"
-                  placeholder="Ej. Firmar acuerdo legal confidencial"
-                  value={initialMilestoneTitle}
-                  onChange={e => setInitialMilestoneTitle(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 transition-all placeholder-slate-400 mb-2 font-semibold"
-                />
-                
-                <label className="block text-[9px] font-black text-slate-450 uppercase mb-1.5 tracking-wider">Límite para este primer hito</label>
-                <input
-                  type="date"
-                  value={initialMilestoneDue}
-                  onChange={e => setInitialMilestoneDue(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 transition-all font-semibold"
-                />
+          {/* Alert Status Filter */}
+          <div>
+            <label className="block text-[10px] font-black text-slate-400 uppercase mb-1.5">Estado de Alertas</label>
+            <select
+              value={selectedStatus}
+              onChange={e => setSelectedStatus(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white font-medium transition-all"
+            >
+              <option value="ALL">Todos los Estados</option>
+              <option value="OK">Al Día (Sin alertas)</option>
+              <option value="BLOCKED">Exclusivo Bloqueados</option>
+              <option value="OVERDUE">Exclusivo Fechas Vencidas</option>
+            </select>
+          </div>
+        </div>
 
-                <label className="block text-[9px] font-black text-slate-450 uppercase mb-1.5 tracking-wider mt-2">Área para este primer hito</label>
-                <select
-                  value={initialMilestoneArea}
-                  onChange={e => {
-                    setInitialMilestoneArea(e.target.value);
-                    setInitialMilestonePerson('');
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-850 focus:outline-none focus:border-blue-500 transition-all font-bold"
-                >
-                  <option value="">-- Sin área específica / General --</option>
-                  {selectedAreas.map(area => (
-                    <option key={area} value={area}>
-                      {area}
-                    </option>
-                  ))}
-                </select>
+        {/* Selected parameters and count */}
+        <div className="flex justify-between items-center text-xs text-slate-500 pt-3 border-t border-slate-100 font-semibold font-sans">
+          <span>Se encontraron <span className="font-bold text-slate-800">{filteredProjects.length}</span> proyectos que coinciden</span>
+          {(searchQuery || selectedStage !== 'ALL' || selectedArea !== 'ALL' || selectedStatus !== 'ALL' || selectedPerson !== 'ALL') && (
+            <button
+              onClick={() => {
+                setSearchQuery('');
+                handleStageChange('ALL');
+                handleAreaChange('ALL');
+                setSelectedStatus('ALL');
+                setSelectedPerson('ALL');
+              }}
+              className="text-blue-600 hover:text-blue-700 hover:underline font-bold"
+            >
+              Restablecer filtros
+            </button>
+          )}
+        </div>
+      </div>
 
-                {initialMilestoneArea && (
-                  <div className="animate-fade-in">
-                    <label className="block text-[9px] font-black text-slate-450 uppercase mb-1.5 tracking-wider mt-2">Consultor responsable para este primer hito</label>
-                    <select
-                      value={initialMilestonePerson}
-                      onChange={e => setInitialMilestonePerson(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-850 focus:outline-none focus:border-blue-500 transition-all font-bold"
-                    >
-                      <option value="">-- Sin consultor específico asignado --</option>
-                      {(peopleByArea[initialMilestoneArea] || []).map(person => (
-                        <option key={person} value={person}>
-                          {person}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+      {/* Grid of Project Cards */}
+      {filteredProjects.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filteredProjects.map(proj => {
+            const stageMeta = stageDetails[proj.stage] || { label: proj.stage, bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200' };
+            const isCompleted = proj.stage === 'COMPLETADO' || proj.stage === 'CANCELADO';
+            const isOverdue = !isCompleted && new Date(proj.dueDate) < today;
+
+            return (
+              <div
+                key={proj.id}
+                className="bg-white rounded-2xl border border-slate-200 hover:border-blue-300 shadow-sm transition-all duration-300 flex flex-col hover:shadow-md relative overflow-hidden group"
+              >
+                {/* Visual block line indicators */}
+                {proj.hasBlocker ? (
+                  <div className="absolute top-0 left-0 right-0 h-1.5 bg-red-500"></div>
+                ) : isOverdue ? (
+                  <div className="absolute top-0 left-0 right-0 h-1.5 bg-amber-500"></div>
+                ) : (
+                  <div className="absolute top-0 left-0 right-0 h-1.5 bg-slate-100 group-hover:bg-blue-500 transition-colors"></div>
                 )}
-              </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Section 3.5: Staffing assignments per area */}
-        {selectedAreas.length > 0 && (
-          <div className="space-y-4 pt-4 border-t border-slate-100 animate-fade-in">
-            <div className="flex items-center gap-1.5 pb-2 border-b border-slate-100 text-slate-800 text-sm font-bold">
-              <User className="w-4 h-4 text-blue-600" />
-              <h3 className="tracking-tight font-black uppercase text-slate-700 text-xs">3.5 Asignación de Personal por Área</h3>
-            </div>
-            <p className="text-[11px] text-slate-500 font-medium">
-              Escribe y agrega los nombres de los consultores o responsables dedicados a cada una de las áreas seleccionadas:
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {selectedAreas.map(area => {
-                const persons = areaAssignments[area] || [];
-                const style = getAreaStyle(area);
-                return (
-                  <div key={area} className={`${style.bg} ${style.border} border rounded-xl p-3.5 space-y-2.5 flex flex-col justify-between shadow-xs transition-all`}>
-                    <div>
-                      <span className={`text-[10px] uppercase font-black ${style.text} tracking-wider block mb-1.5 leading-snug flex items-center gap-1.5`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${style.circleBg}`} />
-                        {area}
-                      </span>
-                      {/* Person tags list */}
-                      <div className="flex flex-wrap gap-1.5 min-h-[32px] items-center">
-                        {persons.length === 0 ? (
-                          <span className="text-[10px] text-slate-450 font-medium italic">Sin personal asignado</span>
-                        ) : (
-                          persons.map(p => (
-                            <span 
-                              key={p} 
-                              className="inline-flex items-center gap-1 bg-white border border-slate-200 text-slate-700 rounded-md px-2 py-0.5 text-[10px] font-bold shadow-xs hover:border-red-500 transition-colors group cursor-pointer"
-                              onClick={() => handleRemovePerson(area, p)}
-                              title="Remover asignación"
-                            >
-                              {p}
-                              <X className="w-2.5 h-2.5 text-slate-400 group-hover:text-red-500 transition-colors" />
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                    {/* Select to quick add predefined person */}
-                    <div className="flex gap-1.5 pt-2 border-t border-slate-200/50">
-                      <select
-                        value={personInputs[area] || ''}
-                        onChange={e => setPersonInputs(prev => ({ ...prev, [area]: e.target.value }))}
-                        className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] text-slate-850 focus:outline-none focus:border-blue-500 font-bold transition-all"
-                      >
-                        <option value="">-- Seleccionar consultor --</option>
-                        {(peopleByArea[area] || []).map(p => {
-                          const isAssigned = (areaAssignments[area] || []).includes(p);
-                          return (
-                            <option key={p} value={p} disabled={isAssigned}>
-                              {p} {isAssigned ? '(Asignado)' : ''}
-                            </option>
-                          );
-                        })}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => handleAddPerson(area)}
-                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-[11px] font-bold rounded-lg transition shrink-0"
-                      >
-                        Asignar
-                      </button>
+                {/* Card Header information */}
+                <div className="p-6 flex-1 space-y-4">
+                  <div className="flex justify-between items-start gap-2">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${stageMeta.bg} ${stageMeta.text} ${stageMeta.border}`}>
+                      {stageMeta.label}
+                    </span>
+                    
+                    {/* Urgency Badge Indicators */}
+                    <div className="flex gap-1.5">
+                      {proj.hasBlocker && (
+                        <span className="bg-red-50 border border-red-200 text-red-700 text-[9px] px-2 py-0.5 rounded font-black flex items-center gap-1" title="Inconveniente crítico activo">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse"></span>
+                          BLOQUEADO
+                        </span>
+                      )}
+                      {isOverdue && (
+                        <span className="bg-amber-50 border border-amber-200 text-amber-850 text-[9px] px-2 py-0.5 rounded font-black flex items-center gap-1" title="Hito vencido según cronograma">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                          EXPIRADO
+                        </span>
+                      )}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
-        {/* Section 4: Initial private notes */}
-        <div className="space-y-2 pt-2">
-          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">Observaciones y Comentarios Iniciales</label>
-          <textarea
-            name="notes"
-            value={formData.notes}
-            onChange={handleFormChange}
-            rows={2}
-            placeholder="Registre de manera opcional consideraciones tarifarias especiales o metas de cofinanciación..."
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 focus:bg-white transition-all resize-none placeholder-slate-400 font-medium"
-          ></textarea>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider">
+                      <Building2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                      <span className="line-clamp-1">{proj.entity}</span>
+                    </div>
+                    <h3 
+                      onClick={() => onSelectProject(proj.id)}
+                      className="text-base font-black text-slate-850 group-hover:text-blue-600 transition-colors cursor-pointer line-clamp-1 font-sans"
+                    >
+                      {proj.name}
+                    </h3>
+                    <p className="text-xs text-slate-500 leading-relaxed line-clamp-2 md:h-10 font-medium">
+                      {proj.description}
+                    </p>
+                  </div>
+
+                  {/* Areas and assigned personnel list */}
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[9px] uppercase font-black text-slate-400 tracking-wider block">Áreas y Personal de Trabajo:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {proj.areas.map(areaName => {
+                        const assignments = proj.areaAssignments || {};
+                        const assignedPeople = assignments[areaName] || [];
+                        const style = getAreaStyle(areaName);
+
+                        return (
+                          <div 
+                            key={areaName} 
+                            className={`${style.bg} ${style.border} border rounded-lg px-2.5 py-1 text-[10px] flex flex-col justify-center`}
+                          >
+                            <span className="font-extrabold text-slate-850 leading-tight block">{areaName}</span>
+                            {assignedPeople.length > 0 ? (
+                              <span className="text-[9px] text-slate-600 font-bold leading-normal text-ellipsis overflow-hidden max-w-[130px]" title={assignedPeople.join(', ')}>
+                                {assignedPeople.join(', ')}
+                              </span>
+                            ) : (
+                              <span className="text-[9px] text-slate-400 italic">Sin asignar</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Operational indicators Row */}
+                  <div className="grid grid-cols-2 gap-4 py-4 border-y border-slate-100 text-xs">
+                    <div className="space-y-0.5">
+                      <span className="text-[9px] uppercase font-black text-slate-400 tracking-wider flex items-center gap-1">
+                        <User className="w-3 h-3 text-slate-400" />
+                        Líder Encargado
+                      </span>
+                      <p className="font-bold text-slate-850 line-clamp-1">{proj.leader}</p>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <span className="text-[9px] uppercase font-black text-slate-400 tracking-wider flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-slate-400" />
+                        Fin Etapa
+                      </span>
+                      <p className={`font-bold font-mono ${isOverdue ? 'text-amber-700' : 'text-slate-850'}`}>
+                        {proj.dueDate}
+                      </p>
+                    </div>
+
+                    <div className="space-y-0.5 col-span-2">
+                      <span className="text-[9px] uppercase font-black text-slate-400 tracking-wider flex items-center gap-1">
+                        <DollarSign className="w-3 h-3 text-slate-400" />
+                        Presupuesto del Proyecto / Consultoría
+                      </span>
+                      <p className="font-black text-slate-900 font-mono text-[13px] leading-none pt-0.5">
+                        {formatCOP(proj.budget)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Scope percentage bar */}
+                  <div className="space-y-1.5 pt-0.5">
+                    <div className="flex justify-between items-center text-xs font-semibold">
+                      <span className="text-slate-450 text-[11px] flex items-center gap-1">
+                        <TrendingUp className="w-3.5 h-3.5 text-slate-400" />
+                        Progreso General
+                      </span>
+                      <span className="font-black text-slate-900 font-mono">{proj.progress}%</span>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                      <div 
+                        className={`h-full rounded-full transition-all duration-500 ${proj.hasBlocker ? 'bg-red-500' : 'bg-emerald-500'}`} 
+                        style={{ width: `${proj.progress}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer Controls */}
+                <div className="bg-slate-50/50 px-6 py-3 border-t border-slate-100 flex justify-between items-center relative overflow-visible">
+                  <button 
+                    onClick={() => onDeleteProject(proj.id)}
+                    className="text-slate-400 hover:text-red-600 transition-colors py-1.5 px-2 hover:bg-red-50 rounded-lg text-xs font-bold flex items-center gap-1"
+                    title="Eliminar este proyecto de la cartera"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Eliminar</span>
+                  </button>
+
+                  <div className="flex items-center gap-2 relative">
+                    <button 
+                      onMouseEnter={() => setHoveredQuickPeek(proj.id)}
+                      onMouseLeave={() => setHoveredQuickPeek(null)}
+                      className="text-slate-500 hover:text-slate-800 py-1.5 px-2.5 bg-slate-200/50 hover:bg-slate-200/75 text-[11px] font-bold rounded-lg flex items-center gap-1 transition-all"
+                    >
+                      <span>🔍 Ver Hitos</span>
+                    </button>
+
+                    {hoveredQuickPeek === proj.id && (
+                      <div className="absolute right-0 bottom-full mb-2 bg-slate-900 text-white rounded-2xl p-4 shadow-2xl z-50 animate-fade-in pointer-events-none text-xs border border-slate-800 space-y-3 w-72 sm:w-80 font-sans">
+                        <div>
+                          <span className="text-[9px] uppercase font-black text-slate-350 tracking-wider block">Vista Rápida de Hitos</span>
+                          <span className="text-[11px] font-black text-slate-100 leading-tight block">{proj.name}</span>
+                          <span className="text-[9px] font-bold text-slate-400">Progreso actual: {proj.progress}%</span>
+                        </div>
+                        
+                        <div className="pt-2 border-t border-slate-800 space-y-1">
+                          <span className="text-[9px] uppercase font-black text-emerald-400 tracking-wider block">Entregables & Tareas ({proj.milestones.length})</span>
+                          <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                            {proj.milestones.map((m, index) => (
+                              <div key={m.id} className="flex justify-between items-center text-[10px] bg-slate-850 p-2 rounded border border-slate-800">
+                                <span className={m.completed ? 'line-through text-slate-500 font-medium font-sans' : 'text-slate-200 font-bold font-sans'}>
+                                  {index + 1}. {m.title}
+                                </span>
+                                <span className={m.completed ? 'text-emerald-400 text-[9px] font-extrabold font-mono bg-emerald-950/40 px-1 border border-transparent rounded' : 'text-amber-400 text-[9px] font-extrabold font-mono bg-amber-950/40 px-1 rounded'}>
+                                  {m.completed ? 'COMPLETO ✓' : 'PENDIENTE'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {proj.hasBlocker && (
+                          <div className="bg-red-950/40 p-2 rounded border border-red-900/60 text-[10px] text-red-200">
+                            <span className="font-extrabold uppercase tracking-widest text-[8px] text-red-400 block mb-0.5">⚠️ IMPEDIMENTO CRÍTICO</span>
+                            "{proj.blockerDescription}"
+                          </div>
+                        )}
+                        
+                        <div className="flex justify-between items-center pt-2 border-t border-slate-800 text-[8px] font-black text-slate-500 uppercase tracking-wider">
+                          <span>Áreas: {proj.areas.length} asignadas</span>
+                          <span className="text-teal-400 font-extrabold">Gestionar para editar &rarr;</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <button 
+                      onClick={() => onSelectProject(proj.id)}
+                      className="text-blue-600 hover:text-blue-800 py-1.5 px-3 hover:bg-slate-100 rounded-lg font-black text-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <span>Gestionar</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
-
-        {/* Inline Custom Error alert */}
-        {errorMsg && (
-          <div className="p-4 bg-red-50 border border-red-150 text-red-800 rounded-xl flex items-center gap-2 animate-fade-in text-xs font-bold">
-            <AlertCircle className="w-4 h-4 text-red-650 shrink-0" />
-            <span>{errorMsg}</span>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center max-w-xl mx-auto space-y-4 shadow-sm animate-fade-in">
+          <div className="p-4 bg-slate-50 rounded-full inline-block text-slate-400 border border-slate-100">
+            <BookmarkPlus className="w-10 h-10 text-slate-500" />
           </div>
-        )}
-
-        {/* Action Controls */}
-        <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+          <h3 className="text-lg font-black text-slate-900 tracking-tight">No se encontraron proyectos</h3>
+          <p className="text-xs text-slate-500 font-medium">
+            Intenta cambiar los términos de búsqueda o filtros seleccionados en la barra de herramientas avanzada para visualizar otros resultados.
+          </p>
           <button
-            type="button"
-            onClick={onCancel}
-            className="px-4 py-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 transition-all cursor-pointer active:scale-95"
+            onClick={() => {
+              setSearchQuery('');
+              setSelectedStage('ALL');
+              setSelectedArea('ALL');
+              setSelectedStatus('ALL');
+            }}
+            className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-sm"
           >
-            Cancelar
-          </button>
-
-          <button
-            type="submit"
-            className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-2 px-6 text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer active:scale-95"
-          >
-            <Save className="w-4 h-4" />
-            <span>Guardar Proyecto</span>
+            Limpiar filtros
           </button>
         </div>
-      </form>
+      )}
     </div>
   );
 }
