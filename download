@@ -1,2 +1,2 @@
-GEMINI_API_KEY=""
-DATABASE_URL="postgresql://neondb_owner:npg_geTLOpVhN57i@ep-morning-art-atwh6yqv-pooler.c-9.us-east-1.aws.neon.tech/neondb?channel_binding=require&sslmode=require"
+import app from "../server";
+export default app;

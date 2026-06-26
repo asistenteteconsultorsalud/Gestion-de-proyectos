@@ -14,7 +14,15 @@ let poolInstance: pg.Pool | null = null;
 let lastUsedDatabaseUrl: string | null = null;
 
 function getPool(): pg.Pool {
-  const currentEnvUrl = process.env.DATABASE_URL || "";
+  let currentEnvUrl = (process.env.DATABASE_URL || "").trim();
+  
+  // Clean potential enclosing double or single quotes from manual copy-paste in Vercel settings
+  if (currentEnvUrl.startsWith('"') && currentEnvUrl.endsWith('"')) {
+    currentEnvUrl = currentEnvUrl.slice(1, -1).trim();
+  }
+  if (currentEnvUrl.startsWith("'") && currentEnvUrl.endsWith("'")) {
+    currentEnvUrl = currentEnvUrl.slice(1, -1).trim();
+  }
   
   if (poolInstance && lastUsedDatabaseUrl !== currentEnvUrl) {
     console.log("DATABASE_URL changed or initialized. Recreating connection pool...");
@@ -24,7 +32,7 @@ function getPool(): pg.Pool {
 
   if (!poolInstance) {
     if (!currentEnvUrl) {
-      throw new Error("DATABASE_URL is not defined in the environment variables.");
+      throw new Error("DATABASE_URL variable is empty or not defined. Please verify your Vercel project Environment Variables configuration.");
     }
     
     let sanitizedUrl = currentEnvUrl;
@@ -44,6 +52,9 @@ function getPool(): pg.Pool {
     poolInstance = new Pool({
       connectionString: sanitizedUrl,
       ssl: { rejectUnauthorized: false },
+      max: 4,                      // Keep connection count low for Serverless / FaaS environments
+      idleTimeoutMillis: 8000,     // Close idle clients fast to prevent connection leaks
+      connectionTimeoutMillis: 12000, // Wait up to 12s for Neon database cold-start wakeup
     });
     lastUsedDatabaseUrl = currentEnvUrl;
   }
@@ -399,6 +410,7 @@ async function initDb() {
     console.error("Error initializing database or seeding:", error);
     dbConnectionStatus.connected = false;
     dbConnectionStatus.error = error.message || String(error);
+    throw error;
   }
 }
 
@@ -461,8 +473,12 @@ async function ensureDb() {
   await dbInitializationPromise;
 }
 
-// Ensure database is initialized before any API request is handled
+// Ensure database is initialized before any API request is handled (except db-status)
 app.use("/api", async (req, res, next) => {
+  // Allow checking connection status even if DB is failing to initialize
+  if (req.path === "/db-status" || req.url.endsWith("/db-status")) {
+    return next();
+  }
   try {
     await ensureDb();
     next();
